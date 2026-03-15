@@ -42,10 +42,22 @@ def vobsub_xml_png_to_srt(xml_file, png_dir, output_srt):
             f.write(f'{start_time} --> {end_time}\n')
             f.write(f'{text}\n\n')
 
-def convert_time(time):
-    """将 XML 中的时间格式转换为 SRT 格式"""
+def convert_time(time, fps=29.97):
+    """将 XML 中的时间格式转换为 SRT 格式
+
+    XML 格式: HH:MM:SS:FF (帧)
+    SRT 格式: HH:MM:SS,mmm (毫秒)
+    """
     times = time.split(':')
-    return f'{int(times[0]):02d}:{int(times[1]):02d}:{int(times[2]):02d},{int(times[3]):03d}'
+    hours = int(times[0])
+    minutes = int(times[1])
+    seconds = int(times[2])
+    frames = int(times[3])
+
+    # 将帧转换为毫秒
+    milliseconds = int(frames * 1000 / fps)
+
+    return f'{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}'
 
 # 示例用法
 name = sys.argv[1]
