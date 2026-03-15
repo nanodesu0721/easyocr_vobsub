@@ -61,12 +61,14 @@ class MainWindow(QMainWindow):
         # VobSub panel (left)
         self.vobsub_panel = VobSubPanel()
         self.vobsub_panel.entry_selected.connect(self.on_vobsub_selected)
+        self.vobsub_panel.file_dropped.connect(self.import_vobsub_from_drop)
         self.splitter.addWidget(self.vobsub_panel)
 
         # SRT panel (right)
         self.srt_panel = SRTPanel()
         self.srt_panel.entry_selected.connect(self.on_srt_selected)
         self.srt_panel.data_changed.connect(self.on_data_changed)
+        self.srt_panel.file_dropped.connect(self.import_srt_from_drop)
         self.splitter.addWidget(self.srt_panel)
 
         # Set splitter proportions
@@ -211,6 +213,10 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
 
+        self.import_vobsub_from_drop(file_path)
+
+    def import_vobsub_from_drop(self, file_path: str):
+        """Import VobSub file from drag and drop."""
         self.settings.setValue('last_dir', str(Path(file_path).parent))
 
         if self.vobsub_panel.load_vobsub(file_path):
@@ -230,6 +236,10 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
 
+        self.import_srt_from_drop(file_path)
+
+    def import_srt_from_drop(self, file_path: str):
+        """Import SRT file from drag and drop."""
         self.settings.setValue('last_dir', str(Path(file_path).parent))
 
         if self.srt_panel.load_srt(file_path):

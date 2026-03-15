@@ -131,12 +131,14 @@ class VobSubPanel(QWidget):
     """Panel for displaying VobSub subtitle images."""
 
     entry_selected = pyqtSignal(int)  # Emit index when entry selected
+    file_dropped = pyqtSignal(str)  # Emit file path when file is dropped
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parser: VobSubParser = None
         self.entries: list[VobSubEntry] = []
         self.setup_ui()
+        self.setup_drag_drop()
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -169,11 +171,72 @@ class VobSubPanel(QWidget):
         self.list_widget.itemDoubleClicked.connect(self.on_item_double_clicked)
         layout.addWidget(self.list_widget)
 
+        # Drop area overlay (shown when empty)
+        self.drop_label = QLabel("Drop IDX file here\nor click Import VobSub")
+        self.drop_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.drop_label.setStyleSheet("""
+            QLabel {
+                color: #888888;
+                font-size: 16px;
+                border: 2px dashed #555555;
+                border-radius: 8px;
+                background-color: #2b2b2b;
+                padding: 40px;
+            }
+        """)
+        self.drop_label.hide()
+        layout.addWidget(self.drop_label)
+
+    def setup_drag_drop(self):
+        """Setup drag and drop functionality."""
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event):
+        """Handle drag enter event."""
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            if len(urls) == 1:
+                file_path = urls[0].toLocalFile()
+                if file_path.lower().endswith('.idx'):
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+
+    def dragLeaveEvent(self, event):
+        """Handle drag leave event."""
+        self.drop_label.hide()
+        self.list_widget.show()
+
+    def dropEvent(self, event):
+        """Handle drop event."""
+        self.drop_label.hide()
+        self.list_widget.show()
+
+        if event.mimeData().hasUrls():
+            file_path = event.mimeData().urls()[0].toLocalFile()
+            if file_path.lower().endswith('.idx'):
+                self.file_dropped.emit(file_path)
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+    def show_drop_area(self):
+        """Show drop area when empty."""
+        if not self.entries:
+            self.list_widget.hide()
+            self.drop_label.show()
+
+    def hide_drop_area(self):
+        """Hide drop area."""
+        self.drop_label.hide()
+        self.list_widget.show()
+
     def load_vobsub(self, idx_path: str) -> bool:
         """Load VobSub file."""
         try:
             self.parser = VobSubParser()
             self.entries = self.parser.parse(idx_path)
+            self.hide_drop_area()
             self.populate_list()
             self.count_label.setText(f"{len(self.entries)} entries")
             return True
@@ -252,3 +315,4 @@ class VobSubPanel(QWidget):
         self.entries = []
         self.parser = None
         self.count_label.setText("No file loaded")
+        self.show_drop_area()

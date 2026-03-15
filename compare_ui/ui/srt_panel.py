@@ -82,6 +82,7 @@ class SRTPanel(QWidget):
 
     entry_selected = pyqtSignal(int)  # Emit index when entry selected
     data_changed = pyqtSignal()  # Emit when data changes
+    file_dropped = pyqtSignal(str)  # Emit file path when file is dropped
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -89,6 +90,7 @@ class SRTPanel(QWidget):
         self.entries: list[SRTEntry] = []
         self.match_status: dict[int, str] = {}  # index -> status
         self.setup_ui()
+        self.setup_drag_drop()
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -153,10 +155,71 @@ class SRTPanel(QWidget):
         self.table.itemChanged.connect(self.on_item_changed)
         layout.addWidget(self.table)
 
+        # Drop area overlay (shown when empty)
+        self.drop_label = QLabel("Drop SRT file here\nor click Import SRT")
+        self.drop_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.drop_label.setStyleSheet("""
+            QLabel {
+                color: #888888;
+                font-size: 16px;
+                border: 2px dashed #555555;
+                border-radius: 8px;
+                background-color: #2b2b2b;
+                padding: 40px;
+            }
+        """)
+        self.drop_label.hide()
+        layout.addWidget(self.drop_label)
+
+    def setup_drag_drop(self):
+        """Setup drag and drop functionality."""
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event):
+        """Handle drag enter event."""
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            if len(urls) == 1:
+                file_path = urls[0].toLocalFile()
+                if file_path.lower().endswith('.srt'):
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+
+    def dragLeaveEvent(self, event):
+        """Handle drag leave event."""
+        self.drop_label.hide()
+        self.table.show()
+
+    def dropEvent(self, event):
+        """Handle drop event."""
+        self.drop_label.hide()
+        self.table.show()
+
+        if event.mimeData().hasUrls():
+            file_path = event.mimeData().urls()[0].toLocalFile()
+            if file_path.lower().endswith('.srt'):
+                self.file_dropped.emit(file_path)
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+    def show_drop_area(self):
+        """Show drop area when empty."""
+        if not self.entries:
+            self.table.hide()
+            self.drop_label.show()
+
+    def hide_drop_area(self):
+        """Hide drop area."""
+        self.drop_label.hide()
+        self.table.show()
+
     def load_srt(self, file_path: str) -> bool:
         """Load SRT file."""
         try:
             self.parser = SRTParser()
+            self.hide_drop_area()
             self.entries = self.parser.parse(file_path)
             self.populate_table()
             self.count_label.setText(f"{len(self.entries)} entries")
@@ -385,6 +448,7 @@ class SRTPanel(QWidget):
         self.parser = None
         self.match_status = {}
         self.count_label.setText("No file loaded")
+        self.show_drop_area()
 
     def has_unsaved_changes(self) -> bool:
         """Check if there are unsaved changes."""
