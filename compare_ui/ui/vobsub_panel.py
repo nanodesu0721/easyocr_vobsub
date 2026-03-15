@@ -231,10 +231,15 @@ class VobSubPanel(QWidget):
         self.drop_label.hide()
         self.list_widget.show()
 
-    def load_vobsub(self, idx_path: str) -> bool:
-        """Load VobSub file."""
+    def load_vobsub(self, idx_path: str, fps: str = 'ntsc') -> bool:
+        """Load VobSub file.
+
+        Args:
+            idx_path: Path to IDX file
+            fps: Frame rate ('23.976', '24', '25', '29.97', '30', 'keep')
+        """
         try:
-            self.parser = VobSubParser()
+            self.parser = VobSubParser(fps=fps)
             self.entries = self.parser.parse(idx_path)
             self.hide_drop_area()
             self.populate_list()

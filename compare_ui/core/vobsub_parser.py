@@ -20,7 +20,23 @@ class VobSubParser:
     # Path to BDSup2Sub JAR file
     BDSUP2SUB_JAR = Path(__file__).parent.parent.parent / "BDSup2Sub.jar"
 
-    def __init__(self):
+    # Frame rate options for BDSup2Sub
+    FPS_OPTIONS = {
+        '23.976': '24p',
+        '24': '24p',
+        '25': 'pal',
+        '29.97': 'ntsc',
+        '30': 'ntsc',
+        'keep': 'keep',
+    }
+
+    def __init__(self, fps: str = 'ntsc'):
+        """Initialize parser.
+
+        Args:
+            fps: Frame rate for conversion. Options: '23.976', '24', '25', '29.97', '30', 'keep'
+                 Default is 'ntsc' (29.97fps) for NTSC DVDs.
+        """
         self.entries: List[VobSubEntry] = []
         self.idx_path: Optional[Path] = None
         self.sub_path: Optional[Path] = None
@@ -29,6 +45,7 @@ class VobSubParser:
         self.palette: List[Tuple[int, int, int, int]] = []
         self.size: Tuple[int, int] = (720, 576)
         self._temp_dir: Optional[Path] = None
+        self.fps = fps
 
     def _get_cache_dir(self) -> Path:
         """Get cache directory for extracted files.
@@ -42,9 +59,9 @@ class VobSubParser:
         cache_base = Path(tempfile.gettempdir()) / "easyocr_vobsub_cache"
         cache_base.mkdir(parents=True, exist_ok=True)
 
-        # Use file hash (mtime + size) as cache key
+        # Use file hash (mtime + size + fps) as cache key
         stat = self.sub_path.stat()
-        cache_key = f"{self.sub_path.name}_{stat.st_mtime}_{stat.st_size}"
+        cache_key = f"{self.sub_path.name}_{stat.st_mtime}_{stat.st_size}_{self.fps}"
         cache_dir = cache_base / cache_key
         cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -92,8 +109,13 @@ class VobSubParser:
 
             # Run BDSup2Sub in temp directory
             temp_xml = temp_sub.with_suffix('.xml')
+
+            # Get FPS option for BDSup2Sub
+            fps_option = self.FPS_OPTIONS.get(str(self.fps), 'ntsc')
+
             cmd = [
                 'java', '-jar', str(self.BDSUP2SUB_JAR),
+                '-T', fps_option,  # Set frame rate
                 '-o', str(temp_xml),
                 str(temp_sub)
             ]
@@ -128,9 +150,12 @@ class VobSubParser:
                         shutil.copy2(str(png_file), str(dest))
 
     def _parse_xml(self):
-        """Parse BDSup2Sub-generated XML file."""
+        """Parse BDSup2Sub-generated XML file and IDX file for accurate timing."""
         if not self.xml_path.exists():
             raise FileNotFoundError(f"XML file not found: {self.xml_path}")
+
+        # Parse IDX file for accurate millisecond start timestamps
+        idx_start_times = self._parse_idx_start_times()
 
         tree = ET.parse(self.xml_path)
         root = tree.getroot()
@@ -141,13 +166,24 @@ class VobSubParser:
             raise ValueError("No Events element found in XML")
 
         self.entries = []
-        for i, event in enumerate(events_elem.iter('Event'), 1):
-            # Parse timecodes
+        events_list = list(events_elem.iter('Event'))
+
+        for i, event in enumerate(events_list, 1):
+            # Get XML timecodes for duration calculation
             in_tc = event.get('InTC', '00:00:00:00')
             out_tc = event.get('OutTC', '00:00:00:00')
+            xml_start = self._parse_timecode(in_tc)
+            xml_end = self._parse_timecode(out_tc)
+            xml_duration = xml_end - xml_start
 
-            start_time = self._parse_timecode(in_tc)
-            end_time = self._parse_timecode(out_tc)
+            # Use IDX start time if available (more accurate), otherwise use XML
+            if i <= len(idx_start_times):
+                start_time = idx_start_times[i - 1]
+            else:
+                start_time = xml_start
+
+            # Calculate end time: start_time + duration from XML
+            end_time = start_time + xml_duration
 
             # Parse graphic info
             graphic = event.find('Graphic')
@@ -177,11 +213,42 @@ class VobSubParser:
             entry._y_pos = y_pos
             self.entries.append(entry)
 
+    def _parse_idx_start_times(self) -> list[int]:
+        """Parse IDX file for millisecond-accurate start timestamps.
+
+        Returns list of start times in milliseconds.
+        """
+        start_times = []
+
+        try:
+            with open(self.idx_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+
+            # Parse timestamp entries
+            # Format: timestamp: HH:MM:SS:mmm, filepos: XXXXXXXX
+            entry_pattern = r'timestamp:\s*(\d+):(\d+):(\d+):(\d+),\s*filepos:\s*([0-9a-fA-F]+)'
+            matches = re.finditer(entry_pattern, content)
+
+            for match in matches:
+                hours = int(match.group(1))
+                minutes = int(match.group(2))
+                seconds = int(match.group(3))
+                milliseconds = int(match.group(4))
+
+                # Convert to milliseconds
+                start_time = hours * 3600000 + minutes * 60000 + seconds * 1000 + milliseconds
+                start_times.append(start_time)
+
+        except Exception as e:
+            print(f"Warning: Failed to parse IDX timestamps: {e}")
+
+        return start_times
+
     def _parse_timecode(self, tc: str) -> int:
         """Parse timecode string to milliseconds.
 
         Format: HH:MM:SS:FF (hours:minutes:seconds:frames)
-        Assumes 25fps (PAL) based on BDSup2Sub output.
+        Frame rate is determined by BDSup2Sub output (set via fps parameter).
         """
         parts = tc.split(':')
         if len(parts) != 4:
@@ -192,9 +259,21 @@ class VobSubParser:
         seconds = int(parts[2])
         frames = int(parts[3])
 
-        # Convert to milliseconds (25fps)
+        # Get actual frame rate from BDSup2Sub output
+        fps_values = {
+            '23.976': 23.976,
+            '24p': 23.976,
+            'pal': 25.0,
+            '25p': 25.0,
+            'ntsc': 29.97,
+            '30p': 29.97,
+            'keep': 25.0,  # fallback
+        }
+        actual_fps = fps_values.get(self.fps, 25.0)
+
+        # Convert to milliseconds
         total_ms = hours * 3600000 + minutes * 60000 + seconds * 1000
-        total_ms += int(frames * 1000 / 25)  # 25fps
+        total_ms += int(frames * 1000 / actual_fps)
 
         return total_ms
 

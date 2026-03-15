@@ -219,7 +219,11 @@ class MainWindow(QMainWindow):
         """Import VobSub file from drag and drop."""
         self.settings.setValue('last_dir', str(Path(file_path).parent))
 
-        if self.vobsub_panel.load_vobsub(file_path):
+        # Get FPS from settings or ask user
+        fps = self.settings.value('vobsub_fps', 'ntsc')
+
+        # Reload with selected FPS
+        if self.vobsub_panel.load_vobsub(file_path, fps):
             self.vobsub_path = file_path
             self.vobsub_status.setText(f"VobSub: {Path(file_path).name}")
             self.compare_subtitles()
