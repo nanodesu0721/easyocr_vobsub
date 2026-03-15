@@ -1,0 +1,5 @@
+.claude/
+.idea/
+.vscode/
+test_data/
+__pycache__/

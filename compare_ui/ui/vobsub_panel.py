@@ -1,0 +1,254 @@
+"""VobSub panel for displaying subtitle images."""
+
+import sys
+import os
+
+# Add parent directory to path for imports
+_script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
+
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QListWidget, QListWidgetItem,
+    QLabel, QHBoxLayout, QPushButton, QDialog, QScrollArea,
+    QMessageBox
+)
+from PyQt6.QtCore import Qt, pyqtSignal, QSize
+from PyQt6.QtGui import QPixmap, QImage
+from PIL import Image
+import io
+
+from core.models import VobSubEntry
+from core.vobsub_parser import VobSubParser
+
+
+class VobSubItemWidget(QWidget):
+    """Custom widget for VobSub list item."""
+
+    def __init__(self, entry: VobSubEntry, parent=None):
+        super().__init__(parent)
+        self.entry = entry
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(12)
+
+        # Info (now on the left)
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(4)
+
+        # Index and time
+        index_label = QLabel(f"#{self.entry.index}")
+        index_label.setStyleSheet("font-weight: bold; color: #4b6eaf; font-size: 14px;")
+        info_layout.addWidget(index_label)
+
+        time_label = QLabel(f"{self.entry.start_time_str} --> {self.entry.end_time_str}")
+        time_label.setStyleSheet("color: #bbbbbb; font-family: Consolas, monospace;")
+        info_layout.addWidget(time_label)
+
+        duration_label = QLabel(f"Duration: {self.entry.duration}ms")
+        duration_label.setStyleSheet("color: #888888; font-size: 10px;")
+        info_layout.addWidget(duration_label)
+
+        layout.addLayout(info_layout)
+
+        # Spacer to push thumbnail to the right
+        layout.addStretch(stretch=1)
+
+        # Thumbnail (now on the right)
+        self.thumb_label = QLabel()
+        # Use a larger size that maintains aspect ratio better for subtitle images
+        # VobSub subtitle images vary in height (single line ~40px, double line ~80px)
+        # Set fixed size large enough to accommodate most subtitle images
+        self.thumb_label.setFixedSize(400, 120)
+        self.thumb_label.setStyleSheet("background-color: #1a1a1a; border: 1px solid #555; color: #666;")
+        self.thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.thumb_label.setText("Loading...")
+        layout.addWidget(self.thumb_label)
+
+    def set_thumbnail(self, pixmap: QPixmap):
+        """Set the thumbnail image."""
+        if not pixmap.isNull():
+            # Scale to fit within the label while maintaining aspect ratio
+            # Scale to fit within 400x120, keeping aspect ratio
+            scaled = pixmap.scaled(
+                396,  # Width (400 - 4 margin)
+                116,  # Height (120 - 4 margin)
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.thumb_label.setPixmap(scaled)
+
+
+class ImageViewerDialog(QDialog):
+    """Dialog for viewing full-size subtitle image."""
+
+    def __init__(self, pixmap: QPixmap, entry: VobSubEntry, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Subtitle #{entry.index} - {entry.start_time_str}")
+        self.setMinimumSize(800, 600)
+        self.setup_ui(pixmap, entry)
+
+    def setup_ui(self, pixmap: QPixmap, entry: VobSubEntry):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Scroll area for image
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("background-color: #1a1a1a;")
+
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setPixmap(pixmap)
+
+        scroll.setWidget(self.image_label)
+        layout.addWidget(scroll)
+
+        # Info bar
+        info_bar = QWidget()
+        info_bar.setStyleSheet("background-color: #3c3f41; padding: 8px;")
+        info_layout = QHBoxLayout(info_bar)
+        info_layout.setContentsMargins(12, 8, 12, 8)
+
+        info_text = f"#{entry.index} | {entry.start_time_str} --> {entry.end_time_str} | Duration: {entry.duration}ms"
+        info_label = QLabel(info_text)
+        info_label.setStyleSheet("color: #bbbbbb; font-family: Consolas, monospace;")
+        info_layout.addWidget(info_label)
+
+        info_layout.addStretch()
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        info_layout.addWidget(close_btn)
+
+        layout.addWidget(info_bar)
+
+
+class VobSubPanel(QWidget):
+    """Panel for displaying VobSub subtitle images."""
+
+    entry_selected = pyqtSignal(int)  # Emit index when entry selected
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parser: VobSubParser = None
+        self.entries: list[VobSubEntry] = []
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Header
+        header = QWidget()
+        header.setStyleSheet("background-color: #3c3f41; padding: 8px;")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(12, 8, 12, 8)
+
+        title = QLabel("VobSub (Image)")
+        title.setStyleSheet("font-weight: bold; color: #bbbbbb; font-size: 14px;")
+        header_layout.addWidget(title)
+
+        header_layout.addStretch()
+
+        self.count_label = QLabel("No file loaded")
+        self.count_label.setStyleSheet("color: #888888;")
+        header_layout.addWidget(self.count_label)
+
+        layout.addWidget(header)
+
+        # List widget
+        self.list_widget = QListWidget()
+        self.list_widget.setSpacing(2)
+        self.list_widget.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self.list_widget.itemClicked.connect(self.on_item_clicked)
+        self.list_widget.itemDoubleClicked.connect(self.on_item_double_clicked)
+        layout.addWidget(self.list_widget)
+
+    def load_vobsub(self, idx_path: str) -> bool:
+        """Load VobSub file."""
+        try:
+            self.parser = VobSubParser()
+            self.entries = self.parser.parse(idx_path)
+            self.populate_list()
+            self.count_label.setText(f"{len(self.entries)} entries")
+            return True
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load VobSub:\n{str(e)}")
+            return False
+
+    def populate_list(self):
+        """Populate the list with VobSub entries."""
+        self.list_widget.clear()
+
+        for entry in self.entries:
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, entry.index)
+            item.setSizeHint(QSize(420, 140))
+
+            widget = VobSubItemWidget(entry)
+            self.list_widget.addItem(item)
+            self.list_widget.setItemWidget(item, widget)
+
+            # Load thumbnail asynchronously
+            self.load_thumbnail(widget, entry)
+
+    def load_thumbnail(self, widget: VobSubItemWidget, entry: VobSubEntry):
+        """Load thumbnail image for entry."""
+        try:
+            if self.parser:
+                img = self.parser.get_image(entry)
+                if img:
+                    # Convert PIL Image to QPixmap
+                    if img.mode != 'RGBA':
+                        img = img.convert('RGBA')
+                    data = img.tobytes('raw', 'RGBA')
+                    qimage = QImage(data, img.width, img.height, QImage.Format.Format_RGBA8888)
+                    pixmap = QPixmap.fromImage(qimage)
+                    widget.set_thumbnail(pixmap)
+        except Exception as e:
+            print(f"Error loading thumbnail for entry {entry.index}: {e}")
+
+    def on_item_clicked(self, item: QListWidgetItem):
+        """Handle item click."""
+        index = item.data(Qt.ItemDataRole.UserRole)
+        self.entry_selected.emit(index)
+
+    def on_item_double_clicked(self, item: QListWidgetItem):
+        """Handle item double click - show full image."""
+        index = item.data(Qt.ItemDataRole.UserRole)
+        entry = next((e for e in self.entries if e.index == index), None)
+        if entry and self.parser:
+            try:
+                img = self.parser.get_image(entry)
+                if img:
+                    if img.mode != 'RGBA':
+                        img = img.convert('RGBA')
+                    data = img.tobytes('raw', 'RGBA')
+                    qimage = QImage(data, img.width, img.height, QImage.Format.Format_RGBA8888)
+                    pixmap = QPixmap.fromImage(qimage)
+
+                    dialog = ImageViewerDialog(pixmap, entry, self)
+                    dialog.exec()
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to load image: {str(e)}")
+
+    def select_entry(self, index: int):
+        """Select entry by index."""
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == index:
+                self.list_widget.setCurrentItem(item)
+                self.list_widget.scrollToItem(item, QListWidget.ScrollHint.PositionAtCenter)
+                break
+
+    def clear(self):
+        """Clear all entries."""
+        self.list_widget.clear()
+        self.entries = []
+        self.parser = None
+        self.count_label.setText("No file loaded")
