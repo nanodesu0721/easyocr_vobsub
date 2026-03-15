@@ -228,6 +228,16 @@ class SRTPanel(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to load SRT:\n{str(e)}")
             return False
 
+    def load_entries(self, entries: list):
+        """Load SRT entries directly (e.g., from OCR)."""
+        self.hide_drop_area()
+        self.entries = entries
+        # Create parser for saving when loading from OCR
+        self.parser = SRTParser()
+        self.parser.entries = entries
+        self.populate_table()
+        self.count_label.setText(f"{len(self.entries)} entries")
+
     def populate_table(self):
         """Populate table with entries."""
         self.table.setRowCount(len(self.entries))

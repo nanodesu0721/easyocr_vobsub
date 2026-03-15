@@ -131,10 +131,20 @@ class MainWindow(QMainWindow):
         compare_btn.clicked.connect(self.compare_subtitles)
         toolbar.addWidget(compare_btn)
 
+        toolbar.addSeparator()
+
+        # OCR button
+        self.ocr_btn = QPushButton("OCR")
+        self.ocr_btn.setToolTip("Run OCR on VobSub images to generate SRT (Ctrl+R)")
+        self.ocr_btn.setEnabled(False)
+        self.ocr_btn.clicked.connect(self.run_ocr)
+        toolbar.addWidget(self.ocr_btn)
+
         self.toolbar_buttons = {
             'import_vobsub': import_vobsub_btn,
             'import_srt': import_srt_btn,
             'save': self.save_btn,
+            'ocr': self.ocr_btn,
         }
 
     def setup_menu(self):
@@ -193,6 +203,11 @@ class MainWindow(QMainWindow):
         compare_action.triggered.connect(self.compare_subtitles)
         edit_menu.addAction(compare_action)
 
+        ocr_action = QAction("Run OCR", self)
+        ocr_action.setShortcut("Ctrl+Shift+O")
+        ocr_action.triggered.connect(self.run_ocr)
+        edit_menu.addAction(ocr_action)
+
         # Navigation menu
         nav_menu = menubar.addMenu("Navigation")
 
@@ -226,6 +241,7 @@ class MainWindow(QMainWindow):
         if self.vobsub_panel.load_vobsub(file_path, fps):
             self.vobsub_path = file_path
             self.vobsub_status.setText(f"VobSub: {Path(file_path).name}")
+            self.ocr_btn.setEnabled(True)
             self.compare_subtitles()
 
     def import_srt(self):
@@ -281,6 +297,124 @@ class MainWindow(QMainWindow):
 
         if not file_path.endswith('.srt'):
             file_path += '.srt'
+
+        self.srt_path = file_path
+        self.save_srt()
+
+    def run_ocr(self):
+        """Run OCR on VobSub images to generate SRT."""
+        if not self.vobsub_panel.entries:
+            QMessageBox.warning(self, "OCR", "No VobSub loaded. Please import VobSub first.")
+            return
+
+        # Ask for language
+        from PyQt6.QtWidgets import QInputDialog
+        languages = ['ch_tra', 'ch_sim', 'en', 'ja', 'ko']
+        lang, ok = QInputDialog.getItem(
+            self, "OCR Language", "Select language:", languages, 0, False
+        )
+        if not ok:
+            return
+
+        # Run OCR in background
+        from PyQt6.QtCore import QThread, pyqtSignal
+
+        class OCRWorker(QThread):
+            progress = pyqtSignal(int, int)
+            finished = pyqtSignal(list)
+            error = pyqtSignal(str)
+
+            def __init__(self, entries, parser, lang):
+                super().__init__()
+                self.entries = entries
+                self.parser = parser
+                self.lang = lang
+
+            def run(self):
+                try:
+                    import easyocr
+                    reader = easyocr.Reader([self.lang])
+
+                    results = []
+                    for i, entry in enumerate(self.entries):
+                        self.progress.emit(i + 1, len(self.entries))
+
+                        img = self.parser.get_image(entry)
+                        if img:
+                            # Save to temp file for EasyOCR
+                            import tempfile
+                            import os
+                            tmp_path = None
+                            try:
+                                # Create temp file without context manager to avoid Windows file lock issues
+                                fd, tmp_path = tempfile.mkstemp(suffix='.png')
+                                os.close(fd)  # Close file descriptor immediately
+                                img.save(tmp_path)
+                                ocr_result = reader.readtext(tmp_path)
+                                text = '\n'.join([r[1] for r in ocr_result])
+                                results.append({
+                                    'index': entry.index,
+                                    'start_time': entry.start_time,
+                                    'end_time': entry.end_time,
+                                    'text': text
+                                })
+                            finally:
+                                # Clean up temp file
+                                if tmp_path and os.path.exists(tmp_path):
+                                    try:
+                                        os.unlink(tmp_path)
+                                    except OSError:
+                                        pass  # Ignore cleanup errors
+
+                    self.finished.emit(results)
+                except Exception as e:
+                    self.error.emit(str(e))
+
+        self.ocr_btn.setEnabled(False)
+        self.status_bar.showMessage("Running OCR...")
+
+        self.ocr_worker = OCRWorker(
+            self.vobsub_panel.entries,
+            self.vobsub_panel.parser,
+            lang
+        )
+        self.ocr_worker.progress.connect(self.on_ocr_progress)
+        self.ocr_worker.finished.connect(self.on_ocr_finished)
+        self.ocr_worker.error.connect(self.on_ocr_error)
+        self.ocr_worker.start()
+
+    def on_ocr_progress(self, current, total):
+        """Update OCR progress."""
+        self.status_bar.showMessage(f"Running OCR... {current}/{total}")
+
+    def on_ocr_finished(self, results):
+        """Handle OCR completion."""
+        self.ocr_btn.setEnabled(True)
+        self.status_bar.showMessage(f"OCR complete: {len(results)} subtitles recognized", 5000)
+
+        # Load results into SRT panel
+        from core.models import SRTEntry
+        entries = []
+        for r in results:
+            entry = SRTEntry(
+                index=r['index'],
+                start_time=r['start_time'],
+                end_time=r['end_time'],
+                text=r['text']
+            )
+            entries.append(entry)
+
+        self.srt_panel.load_entries(entries)
+        self.srt_status.setText(f"SRT: OCR result ({len(entries)} entries)")
+        self.save_btn.setEnabled(True)
+        self.modified = True
+        self.update_title()
+        self.compare_subtitles()
+
+    def on_ocr_error(self, error_msg):
+        """Handle OCR error."""
+        self.ocr_btn.setEnabled(True)
+        QMessageBox.critical(self, "OCR Error", f"Failed to run OCR:\n{error_msg}")
 
         self.srt_path = file_path
         self.save_srt()
