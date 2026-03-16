@@ -148,6 +148,8 @@ class SRTPanel(QWidget):
         self.table.setColumnWidth(2, 100)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # Set default row height to match VobSub panel (144 pixels)
+        self.table.verticalHeader().setDefaultSectionSize(144)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
         self.table.cellClicked.connect(self.on_cell_clicked)

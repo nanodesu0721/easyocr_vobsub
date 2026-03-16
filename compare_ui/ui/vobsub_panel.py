@@ -32,7 +32,7 @@ class VobSubItemWidget(QWidget):
 
     def setup_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(8, 2, 8, 2)
         layout.setSpacing(12)
 
         # Info (now on the left)
@@ -59,10 +59,10 @@ class VobSubItemWidget(QWidget):
 
         # Thumbnail (now on the right)
         self.thumb_label = QLabel()
-        # Use a larger size that maintains aspect ratio better for subtitle images
-        # VobSub subtitle images vary in height (single line ~40px, double line ~80px)
-        # Set fixed size large enough to accommodate most subtitle images
-        self.thumb_label.setFixedSize(400, 120)
+        # Use minimum size to ensure subtitle images are readable
+        # Let the image expand naturally to show full content
+        self.thumb_label.setMinimumSize(300, 40)
+        self.thumb_label.setMaximumSize(400, 120)
         self.thumb_label.setStyleSheet("background-color: #1a1a1a; border: 1px solid #555; color: #666;")
         self.thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.thumb_label.setText("Loading...")
@@ -72,13 +72,17 @@ class VobSubItemWidget(QWidget):
         """Set the thumbnail image."""
         if not pixmap.isNull():
             # Scale to fit within the label while maintaining aspect ratio
-            # Scale to fit within 400x120, keeping aspect ratio
-            scaled = pixmap.scaled(
-                396,  # Width (400 - 4 margin)
-                116,  # Height (120 - 4 margin)
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
+            # Scale to fit within max dimensions while keeping full image visible
+            target_width = 396
+            max_height = 120
+
+            # First scale to fit width
+            scaled = pixmap.scaledToWidth(target_width, Qt.TransformationMode.SmoothTransformation)
+
+            # If height exceeds max, scale down to fit height instead
+            if scaled.height() > max_height:
+                scaled = pixmap.scaledToHeight(max_height, Qt.TransformationMode.SmoothTransformation)
+
             self.thumb_label.setPixmap(scaled)
 
 
@@ -256,7 +260,7 @@ class VobSubPanel(QWidget):
         for entry in self.entries:
             item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, entry.index)
-            item.setSizeHint(QSize(420, 140))
+            item.setSizeHint(QSize(420, 144))
 
             widget = VobSubItemWidget(entry)
             self.list_widget.addItem(item)
