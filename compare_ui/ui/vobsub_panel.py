@@ -61,7 +61,7 @@ class VobSubItemWidget(QWidget):
         self.thumb_label = QLabel()
         # Set fixed size to accommodate subtitle images
         # VobSub subtitle images vary in height (single line ~40px, double line ~80px)
-        self.thumb_label.setFixedSize(400, 140)
+        self.thumb_label.setFixedSize(400, 136)
         self.thumb_label.setStyleSheet("background-color: #1a1a1a; border: 1px solid #555; color: #666;")
         self.thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.thumb_label.setText("Loading...")
@@ -70,10 +70,10 @@ class VobSubItemWidget(QWidget):
     def set_thumbnail(self, pixmap: QPixmap):
         """Set the thumbnail image."""
         if not pixmap.isNull():
-            # Scale to fit within 396x136 while keeping full image visible
+            # Leave vertical safety space for borders and high-DPI rendering.
             scaled = pixmap.scaled(
                 396,
-                136,
+                120,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation
             )
