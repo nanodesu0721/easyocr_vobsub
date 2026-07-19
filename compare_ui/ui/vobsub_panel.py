@@ -11,10 +11,10 @@ if _script_dir not in sys.path:
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QListWidget, QListWidgetItem,
     QLabel, QHBoxLayout, QPushButton, QDialog, QScrollArea,
-    QMessageBox
+    QMessageBox, QHeaderView, QSizePolicy
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
-from PyQt6.QtGui import QPixmap, QImage
+from PyQt6.QtGui import QPixmap, QImage, QStandardItemModel
 from PIL import Image
 import io
 
@@ -59,10 +59,9 @@ class VobSubItemWidget(QWidget):
 
         # Thumbnail (now on the right)
         self.thumb_label = QLabel()
-        # Use minimum size to ensure subtitle images are readable
-        # Let the image expand naturally to show full content
-        self.thumb_label.setMinimumSize(300, 40)
-        self.thumb_label.setMaximumSize(400, 120)
+        # Set fixed size to accommodate subtitle images
+        # VobSub subtitle images vary in height (single line ~40px, double line ~80px)
+        self.thumb_label.setFixedSize(400, 140)
         self.thumb_label.setStyleSheet("background-color: #1a1a1a; border: 1px solid #555; color: #666;")
         self.thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.thumb_label.setText("Loading...")
@@ -71,17 +70,13 @@ class VobSubItemWidget(QWidget):
     def set_thumbnail(self, pixmap: QPixmap):
         """Set the thumbnail image."""
         if not pixmap.isNull():
-            # Scale to fit within the label while maintaining aspect ratio
-            # Scale to fit within max dimensions while keeping full image visible
-            target_width = 396
-            max_height = 120
-
-            # First scale to fit width
-            scaled = pixmap.scaledToWidth(target_width, Qt.TransformationMode.SmoothTransformation)
-
-            # If height exceeds max, scale down to fit height instead
-            if scaled.height() > max_height:
-                scaled = pixmap.scaledToHeight(max_height, Qt.TransformationMode.SmoothTransformation)
+            # Scale to fit within 396x136 while keeping full image visible
+            scaled = pixmap.scaled(
+                396,
+                136,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
 
             self.thumb_label.setPixmap(scaled)
 
@@ -166,6 +161,23 @@ class VobSubPanel(QWidget):
         header_layout.addWidget(self.count_label)
 
         layout.addWidget(header)
+
+        # Column header matching the SRT table header implementation and style
+        self.column_header = QHeaderView(Qt.Orientation.Horizontal)
+        self.column_header_model = QStandardItemModel(0, 2, self.column_header)
+        self.column_header_model.setHorizontalHeaderLabels(["Info", "Image"])
+        self.column_header.setModel(self.column_header_model)
+        self.column_header.setSectionsClickable(False)
+        self.column_header.setHighlightSections(False)
+        self.column_header.setSectionsMovable(False)
+        self.column_header.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.column_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.column_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        self.column_header.resizeSection(1, 416)
+        layout.addWidget(self.column_header)
 
         # List widget
         self.list_widget = QListWidget()
@@ -260,7 +272,7 @@ class VobSubPanel(QWidget):
         for entry in self.entries:
             item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, entry.index)
-            item.setSizeHint(QSize(420, 144))
+            item.setSizeHint(QSize(420, 140))
 
             widget = VobSubItemWidget(entry)
             self.list_widget.addItem(item)
@@ -315,8 +327,45 @@ class VobSubPanel(QWidget):
             item = self.list_widget.item(i)
             if item.data(Qt.ItemDataRole.UserRole) == index:
                 self.list_widget.setCurrentItem(item)
-                self.list_widget.scrollToItem(item, QListWidget.ScrollHint.PositionAtCenter)
+                # Scroll to make item visible at top
+                self.list_widget.scrollToItem(item, QListWidget.ScrollHint.PositionAtTop)
                 break
+
+    def scroll_to_row(self, row: int):
+        """Scroll to specific row by index (0-based)."""
+        if 0 <= row < self.list_widget.count():
+            item = self.list_widget.item(row)
+            if item:
+                self.list_widget.scrollToItem(item, QListWidget.ScrollHint.PositionAtTop)
+
+    def get_row_scroll_position(self, row: int) -> int:
+        """Get the scroll position needed to show a specific row at the top."""
+        if 0 <= row < self.list_widget.count():
+            # Calculate position: row index * row height + spacing
+            return row * 140  # 140 is the fixed row height
+        return 0
+
+    def scroll_to_row_at_top(self, row: int):
+        """Scroll to make a specific row appear at the top of the viewport."""
+        if 0 <= row < self.list_widget.count():
+            target_pos = self.get_row_scroll_position(row)
+            scrollbar = self.list_widget.verticalScrollBar()
+            scrollbar.setValue(min(target_pos, scrollbar.maximum()))
+
+    def get_row_viewport_y(self, row: int) -> int | None:
+        """Return the row's top Y coordinate relative to the list viewport."""
+        if not 0 <= row < self.list_widget.count():
+            return None
+        item = self.list_widget.item(row)
+        return self.list_widget.visualItemRect(item).top()
+
+    def align_row_to_viewport_y(self, row: int, target_y: int):
+        """Scroll until a row is as close as possible to target_y."""
+        current_y = self.get_row_viewport_y(row)
+        if current_y is None:
+            return
+        scrollbar = self.list_widget.verticalScrollBar()
+        scrollbar.setValue(scrollbar.value() + current_y - target_y)
 
     def clear(self):
         """Clear all entries."""

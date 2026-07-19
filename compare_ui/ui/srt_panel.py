@@ -148,8 +148,9 @@ class SRTPanel(QWidget):
         self.table.setColumnWidth(2, 100)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        # Set default row height to match VobSub panel (144 pixels)
-        self.table.verticalHeader().setDefaultSectionSize(144)
+        self.table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        # Set default row height to match VobSub panel (140 pixels)
+        self.table.verticalHeader().setDefaultSectionSize(140)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
         self.table.cellClicked.connect(self.on_cell_clicked)
@@ -444,8 +445,47 @@ class SRTPanel(QWidget):
             item = self.table.item(row, 0)
             if item and item.data(Qt.ItemDataRole.UserRole) == index:
                 self.table.selectRow(row)
-                self.table.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
+                # Scroll to make row visible at top
+                self.table.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtTop)
                 break
+
+    def scroll_to_row(self, row: int):
+        """Scroll to specific row by index (0-based)."""
+        if 0 <= row < self.table.rowCount():
+            item = self.table.item(row, 0)
+            if item:
+                self.table.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtTop)
+
+    def get_row_scroll_position(self, row: int) -> int:
+        """Get the scroll position needed to show a specific row at the top."""
+        if 0 <= row < self.table.rowCount():
+            # Calculate position: row index * row height
+            return row * 140  # 140 is the fixed row height
+        return 0
+
+    def scroll_to_row_at_top(self, row: int):
+        """Scroll to make a specific row appear at the top of the viewport."""
+        if 0 <= row < self.table.rowCount():
+            target_pos = self.get_row_scroll_position(row)
+            scrollbar = self.table.verticalScrollBar()
+            scrollbar.setValue(min(target_pos, scrollbar.maximum()))
+
+    def get_row_viewport_y(self, row: int) -> int | None:
+        """Return the row's top Y coordinate relative to the table viewport."""
+        if not 0 <= row < self.table.rowCount():
+            return None
+        item = self.table.item(row, 0)
+        if item is None:
+            return None
+        return self.table.visualItemRect(item).top()
+
+    def align_row_to_viewport_y(self, row: int, target_y: int):
+        """Scroll until a row is as close as possible to target_y."""
+        current_y = self.get_row_viewport_y(row)
+        if current_y is None:
+            return
+        scrollbar = self.table.verticalScrollBar()
+        scrollbar.setValue(scrollbar.value() + current_y - target_y)
 
     def save(self, file_path: str = None) -> bool:
         """Save SRT file."""

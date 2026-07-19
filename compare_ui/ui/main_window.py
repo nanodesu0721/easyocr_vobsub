@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QToolBar, QPushButton, QFileDialog, QLabel, QMessageBox,
     QStatusBar, QProgressDialog, QApplication
 )
-from PyQt6.QtCore import Qt, QSettings, QSize
+from PyQt6.QtCore import Qt, QSettings, QSize, QTimer
 from PyQt6.QtGui import QAction, QKeySequence, QFont
 
 from ui.vobsub_panel import VobSubPanel
@@ -76,6 +76,9 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self.splitter)
 
+        # Header heights are final only after the styled window is laid out.
+        QTimer.singleShot(0, self.sync_panel_header_heights)
+
         # Status bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -93,6 +96,12 @@ class MainWindow(QMainWindow):
         self.status_bar.addWidget(self.match_status)
 
         self.status_bar.addPermanentWidget(QLabel("Ready"))
+
+    def sync_panel_header_heights(self):
+        """Match the standalone VobSub header to the table-managed SRT header."""
+        header_height = self.srt_panel.table.horizontalHeader().height()
+        self.vobsub_panel.column_header.setFixedHeight(header_height)
+        self.vobsub_panel.layout().activate()
 
         # Setup menu
         self.setup_menu()
@@ -467,12 +476,34 @@ class MainWindow(QMainWindow):
         )
 
     def on_vobsub_selected(self, index: int):
-        """Handle VobSub entry selection."""
-        self.srt_panel.select_entry(index)
+        """Handle VobSub entry selection - sync to SRT panel."""
+        vobsub_row = self.vobsub_panel.list_widget.currentRow()
+        source_y = self.vobsub_panel.get_row_viewport_y(vobsub_row)
+        if source_y is None:
+            return
+
+        # Find the row in SRT panel with matching index
+        for row in range(self.srt_panel.table.rowCount()):
+            item = self.srt_panel.table.item(row, 0)
+            if item and item.data(Qt.ItemDataRole.UserRole) == index:
+                self.srt_panel.table.selectRow(row)
+                self.srt_panel.align_row_to_viewport_y(row, source_y)
+                break
 
     def on_srt_selected(self, index: int):
-        """Handle SRT entry selection."""
-        self.vobsub_panel.select_entry(index)
+        """Handle SRT entry selection - sync to VobSub panel."""
+        srt_row = self.srt_panel.table.currentRow()
+        source_y = self.srt_panel.get_row_viewport_y(srt_row)
+        if source_y is None:
+            return
+
+        # Find the row in VobSub panel with matching index
+        for row in range(self.vobsub_panel.list_widget.count()):
+            item = self.vobsub_panel.list_widget.item(row)
+            if item and item.data(Qt.ItemDataRole.UserRole) == index:
+                self.vobsub_panel.list_widget.setCurrentItem(item)
+                self.vobsub_panel.align_row_to_viewport_y(row, source_y)
+                break
 
     def on_data_changed(self):
         """Handle data modification."""
